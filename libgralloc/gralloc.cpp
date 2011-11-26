@@ -43,7 +43,7 @@
 /*****************************************************************************/
 
 // NOTE: must be the same than in oem.h
-#define ALLOCATORREGION_RESERVED_SIZE           (1200<<10)
+#define ALLOCATORREGION_RESERVED_SIZE           0x2F0000
 #define FB_ARENA                                HW3D_EBI
 
 
@@ -131,11 +131,13 @@ static int gralloc_alloc_framebuffer_locked(alloc_device_t* dev,
     private_module_t* m = reinterpret_cast<private_module_t*>(
             dev->common.module);
 
+    LOGE("GRALLOC_ALLOC_FRAMEBUFFER!!!!! Shouldn't framebuffer.cpp already have nabbed one?");
+
     // allocate the framebuffer
     if (m->framebuffer == NULL) {
         // initialize the framebuffer, the framebuffer is mapped once
         // and forever.
-        int err = mapFrameBufferLocked(m);
+        int err = mapFrameBufferLocked(m,dev);
         if (err < 0) {
             return err;
         }
@@ -161,7 +163,8 @@ static int gralloc_alloc_framebuffer_locked(alloc_device_t* dev,
     intptr_t vaddr = intptr_t(m->framebuffer->base);
     private_handle_t* hnd = new private_handle_t(dup(m->framebuffer->fd), size,
             private_handle_t::PRIV_FLAGS_USES_PMEM |
-            private_handle_t::PRIV_FLAGS_FRAMEBUFFER);
+            private_handle_t::PRIV_FLAGS_FRAMEBUFFER | 
+	    private_handle_t::PRIV_FLAGS_USES_GPU);
 
     // find a free slot
     for (uint32_t i=0 ; i<numBuffers ; i++) {
@@ -243,13 +246,13 @@ static int init_pmem_area(private_module_t* m)
     return err;
 }
 
+struct hw3d_region regions[HW3D_NUM_REGIONS];
 static int init_gpu_area_locked(private_module_t* m)
 {
     int err = 0;
     int gpu = open("/dev/msm_hw3dm", O_RDWR, 0);
     LOGE_IF(gpu<0, "could not open hw3dm (%s)", strerror(errno));
     if (gpu >= 0) {
-        struct hw3d_region regions[HW3D_NUM_REGIONS];
         if (ioctl(gpu, HW3D_GET_REGIONS, regions) < 0) {
             LOGE("HW3D_GET_REGIONS failed (%s)", strerror(errno));
             err = -errno;
@@ -309,6 +312,55 @@ static int init_gpu_area(private_module_t* m)
     }
     pthread_mutex_unlock(&m->lock);
     return err;
+}
+
+#define MSMFB_IOCTL_MAGIC 'm'
+#define MSMFB_RELOCATE          _IOW(MSMFB_IOCTL_MAGIC, 3, unsigned int)
+void* gralloc_alloc_gpu_framebuffer(alloc_device_t* dev, size_t size, int fd, private_handle_t* module)
+{
+    private_module_t* m = reinterpret_cast<private_module_t*>(
+            dev->common.module);
+    void* base = m->gpu_base;
+    int offset = 0;
+    int err;
+
+    LOGE("Alloc gpu framebuffer");
+
+    err = init_gpu_area_locked(m);
+    if (err == 0) {
+        // GPU buffers are always mmapped
+        base = m->gpu_base;
+
+        // When a process holding GPU surfaces gets killed, it may take
+        // up to a few seconds until SurfaceFlinger is notified and can
+        // release the memory. So it's useful to wait a little bit here.
+        long sleeptime = 0;
+        int retry = 8; // roughly 5 seconds
+        do {
+            offset = sAllocatorGPU.allocate(size);
+            if (offset < 0) {
+                // no more pmem memory
+                LOGW("%d KiB allocation failed in GPU memory, retrying...",
+                        size/1024);
+                err = -ENOMEM;
+                sleeptime += 250000;
+                usleep(sleeptime);
+            } else {
+		//TODO: get physical address of pmem region from kernel
+                LOGD("allocating GPU size=%d, offset=%d", size, offset+regions[FB_ARENA].phys);
+                err = ioctl(fd, MSMFB_RELOCATE, offset);
+
+		//TODO: need to set this stuff
+	         module->gpu_fd = m->gpu;
+           	 module->map_offset = m->fb_map_offset;
+            }
+       } while ((err == -ENOMEM) && (retry-- > 0));
+
+   } else {
+	LOGE("GPU Framebuffer allocation failed");
+   }
+
+   return (char*)base + offset;
 }
 
 static int gralloc_alloc_buffer(alloc_device_t* dev,

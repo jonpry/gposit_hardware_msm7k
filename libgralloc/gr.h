@@ -40,9 +40,10 @@ inline size_t roundUpToPageSize(size_t x) {
     return (x + (PAGE_SIZE-1)) & ~(PAGE_SIZE-1);
 }
 
-int mapFrameBufferLocked(struct private_module_t* module);
+int mapFrameBufferLocked(struct private_module_t* module, alloc_device_t* dev);
 int terminateBuffer(gralloc_module_t const* module, private_handle_t* hnd);
 int mapBuffer(gralloc_module_t const* module, private_handle_t* hnd);
+void* gralloc_alloc_gpu_framebuffer(alloc_device_t* dev, size_t size, int fd, private_handle_t* module);
 
 /*****************************************************************************/
 

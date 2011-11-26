@@ -89,7 +89,6 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 {
     if (private_handle_t::validate(buffer) < 0)
         return -EINVAL;
-
     fb_context_t* ctx = (fb_context_t*)dev;
 
     private_handle_t const* hnd = reinterpret_cast<private_handle_t const*>(buffer);
@@ -110,6 +109,8 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
     } else {
         // If we can't do the page_flip, just copy the buffer to the front 
         // FIXME: use copybit HAL instead of memcpy
+
+        LOGE("Used copybit fb post");
         
         void* fb_vaddr;
         void* buffer_vaddr;
@@ -140,7 +141,7 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 
 /*****************************************************************************/
 
-int mapFrameBufferLocked(struct private_module_t* module)
+int mapFrameBufferLocked(struct private_module_t* module, alloc_device_t *gralloc_device)
 {
     // already initialized...
     if (module->framebuffer) {
@@ -291,26 +292,28 @@ int mapFrameBufferLocked(struct private_module_t* module)
     int err;
     size_t fbSize = roundUpToPageSize(finfo.line_length * info.yres_virtual);
     module->framebuffer = new private_handle_t(dup(fd), fbSize,
-            private_handle_t::PRIV_FLAGS_USES_PMEM);
+            private_handle_t::PRIV_FLAGS_USES_GPU);
 
     module->numBuffers = info.yres_virtual / info.yres;
     module->bufferMask = 0;
 
-    void* vaddr = mmap(0, fbSize, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+    void* vaddr = gralloc_alloc_gpu_framebuffer(gralloc_device, fbSize, fd,  module->framebuffer);
+
+ /*   vaddr = mmap(0, fbSize, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
     if (vaddr == MAP_FAILED) {
         LOGE("Error mapping the framebuffer (%s)", strerror(errno));
         return -errno;
-    }
+    }*/
     module->framebuffer->base = intptr_t(vaddr);
 
-    memset(vaddr, 0, fbSize);
-    return 0;
+    memset(vaddr, 0x55, fbSize);
+    return 0;		
 }
 
-static int mapFrameBuffer(struct private_module_t* module)
+static int mapFrameBuffer(struct private_module_t* module, alloc_device_t *gralloc_device)
 {
     pthread_mutex_lock(&module->lock);
-    int err = mapFrameBufferLocked(module);
+    int err = mapFrameBufferLocked(module,gralloc_device);
     pthread_mutex_unlock(&module->lock);
     return err;
 }
@@ -350,7 +353,7 @@ int fb_device_open(hw_module_t const* module, const char* name,
         dev->device.setUpdateRect = 0;
 
         private_module_t* m = (private_module_t*)module;
-        status = mapFrameBuffer(m);
+        status = mapFrameBuffer(m,gralloc_device);
         if (status >= 0) {
             int stride = m->finfo.line_length / (m->info.bits_per_pixel >> 3);
             const_cast<uint32_t&>(dev->device.flags) = 0;

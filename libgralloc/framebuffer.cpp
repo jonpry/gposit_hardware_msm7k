@@ -92,6 +92,9 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 
     fb_context_t* ctx = (fb_context_t*)dev;
 
+ //   LOGE("FB_POST %d", *((unsigned int*)0));
+
+
     private_handle_t const* hnd = reinterpret_cast<private_handle_t const*>(buffer);
     private_module_t* m = reinterpret_cast<private_module_t*>(
             dev->common.module);
@@ -99,7 +102,7 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
     if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) {
         const size_t offset = hnd->base - m->framebuffer->base;
         m->info.activate = FB_ACTIVATE_VBL;
-        m->info.yoffset = offset / m->finfo.line_length;
+        m->info.yoffset = (offset / m->finfo.line_length);//?1:0;
         if (ioctl(m->framebuffer->fd, FBIOPUT_VSCREENINFO, &m->info) == -1) {
             LOGE("FBIOPUT_VSCREENINFO failed");
             m->base.unlock(&m->base, buffer); 

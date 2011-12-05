@@ -70,6 +70,7 @@ struct private_handle_t {
         PRIV_FLAGS_FRAMEBUFFER = 0x00000001,
         PRIV_FLAGS_USES_PMEM   = 0x00000002,
         PRIV_FLAGS_USES_GPU    = 0x00000004,
+        PRIV_FLAGS_USES_OGL    = 0x00000008,
     };
 
     // file-descriptors

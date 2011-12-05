@@ -63,8 +63,8 @@ static int gralloc_map(gralloc_module_t const* module,
         void* mappedAddress = mmap(0, size,
                 PROT_READ|PROT_WRITE, MAP_SHARED, hnd->fd, 0);
         if (mappedAddress == MAP_FAILED) {
-            LOGE("Could not mmap handle %p, fd=%d (%s)",
-                    handle, hnd->fd, strerror(errno));
+            LOGE("Could not mmap handle %p, fd=%d (%s) size (0x%8.8X)",
+                    handle, hnd->fd, strerror(errno), size);
             hnd->base = 0;
             return -errno;
         }

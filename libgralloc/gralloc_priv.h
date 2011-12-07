@@ -87,6 +87,9 @@ struct private_handle_t {
     int     map_offset;
     int     pid;
 
+    int     oem[32];
+    unsigned int  text;
+
 #ifdef __cplusplus
     static const int sNumInts = 8;
     static const int sNumFds = 1;

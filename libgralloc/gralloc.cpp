@@ -61,7 +61,7 @@ struct gralloc_context_t {
 };
 
 static int gralloc_alloc_buffer(alloc_device_t* dev,
-        size_t size, int usage, int w, int h, int format, ogl_alloc_t ogl_alloc, buffer_handle_t* pHandle);
+        size_t size, int usage, int w, int h, int format, int* stride, GLuint *text, ogl_alloc_t ogl_alloc, buffer_handle_t* pHandle);
 
 /*****************************************************************************/
 
@@ -89,6 +89,8 @@ extern int gralloc_perform(struct gralloc_module_t const* module,
         int operation, ... );
 
 /*****************************************************************************/
+
+static ogl_free_t ogl_free;
 
 static struct hw_module_methods_t gralloc_module_methods = {
         open: gralloc_device_open
@@ -151,7 +153,7 @@ static int gralloc_alloc_framebuffer_locked(alloc_device_t* dev,
         // we return a regular buffer which will be memcpy'ed to the main
         // screen when post is called.
         int newUsage = (usage & ~GRALLOC_USAGE_HW_FB) | GRALLOC_USAGE_HW_2D;
-        return gralloc_alloc_buffer(dev, bufferSize, newUsage, 0, 0, 0, 0, pHandle);
+        return gralloc_alloc_buffer(dev, bufferSize, newUsage, 0, 0, 0, 0, 0, 0, pHandle);
     }
 
     if (bufferMask >= ((1LU<<numBuffers)-1)) {
@@ -341,7 +343,7 @@ static int init_gpu_area(private_module_t* m)
 }
 
 static int gralloc_alloc_buffer(alloc_device_t* dev,
-        size_t size, int usage, int w, int h, int format, ogl_alloc_t ogl_alloc, buffer_handle_t* pHandle)
+        size_t size, int usage, int w, int h, int format, int* stride, GLuint *text, ogl_alloc_t ogl_alloc, buffer_handle_t* pHandle)
 {
     int err = 0;
     int flags = 0;
@@ -378,13 +380,33 @@ try_ashmem:
         init_texture_access();
         if (err == 0) {
 	    LOGE("About to call ogl_alloc at 0x%p gpu1_base 0x%p", ogl_alloc, gpu1_base);
-	    GLuint text;
-	    int stride;
 	    int tsize;
 	    base = gpu1_base;
-	    offset = (int)ogl_alloc(w,h,format,&text,&stride,&tsize,gpu1_base);
-            fd = open("/dev/null", O_RDONLY); // just so marshalling doesn't fail
-		
+	    offset = (int)ogl_alloc(w,h,format,text,stride,&tsize,gpu1_base);
+            fd = open("/dev/pmem", O_RDWR, 0);
+	    err = fd < 0 ? fd : 0;
+
+	    int off = offset;
+	    if(off%4096)
+	    {
+		off -= off % 4096;
+		tsize += off % 4096;
+            }
+
+	     if(tsize % 4096)
+		tsize += 4096 - (tsize%4096);
+	    size = tsize;
+
+            struct pmem_region sub = { off, tsize }; //offset, size };
+
+            // and connect to it
+           // if (err == 0)
+                err = ioctl(fd, PMEM_CONNECT, gpu1_fd);
+
+ 	   // and make it available to the client process
+           //if (err == 0)
+                err = ioctl(fd, PMEM_MAP, &sub);
+
 	    LOGE("Memsetting");
             memset((char*)base + offset, 0, size);
 	    LOGE("Done");
@@ -450,6 +472,8 @@ try_ashmem:
             hnd->base = int(base)+offset;
             hnd->gpu_fd = gpu_fd;
             hnd->map_offset = m->fb_map_offset;
+	    if(text)
+		hnd->text = *text;
             *pHandle = hnd;
         }
     }
@@ -464,12 +488,16 @@ try_ashmem:
 static int gralloc_alloc(alloc_device_t* dev,
         int w, int h, int format, int usage,
         buffer_handle_t* pHandle, int* pStride, 
-        ogl_alloc_t ogl_alloc)
+        GLuint* text, ogl_alloc_t ogl_alloc,
+	ogl_free_t ogl_free_i)
 {
     if (!pHandle || !pStride)
         return -EINVAL;
 
     size_t size, stride;
+
+    if(ogl_free_i)	
+	ogl_free = ogl_free_i;
 
     int bpp = 0;
     switch (format) {
@@ -505,17 +533,21 @@ static int gralloc_alloc(alloc_device_t* dev,
     }
 
     int err;
+    int tstride=0;
     if (usage & GRALLOC_USAGE_HW_FB) {
         err = gralloc_alloc_framebuffer(dev, size, usage, pHandle);
     } else {
-        err = gralloc_alloc_buffer(dev, size, usage, w,h,format,ogl_alloc,pHandle);
+        err = gralloc_alloc_buffer(dev, size, usage, w,h,format,&tstride,text,ogl_alloc,pHandle);
     }
 
     if (err < 0) {
         return err;
     }
 
-    *pStride = stride;
+    if(tstride)
+	*pStride = tstride;
+    else
+    	*pStride = stride;
     return 0;
 }
 
@@ -528,6 +560,7 @@ static int gralloc_free(alloc_device_t* dev,
     private_handle_t const* hnd = reinterpret_cast<private_handle_t const*>(handle);
     if (hnd->flags & private_handle_t::PRIV_FLAGS_USES_OGL) {
 	LOGE("Freeing of texture backed memory not supported yet");
+	ogl_free(hnd->text);
     }else if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) {
         // free this buffer
         private_module_t* m = reinterpret_cast<private_module_t*>(

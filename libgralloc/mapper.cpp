@@ -81,7 +81,7 @@ static int gralloc_map(gralloc_module_t const* module,
         }
         hnd->base = intptr_t(mappedAddress) + hnd->offset;
 	//TODO: this is just a hack to make sure our surface is not clobbering anything important
-	hnd->base = (int)malloc(size);
+	//hnd->base = (int)malloc(size);
         //LOGD("gralloc_map() succeeded fd=%d, off=%d, size=%d, vaddr=%p", 
         //        hnd->fd, hnd->offset, hnd->size, mappedAddress);
     }

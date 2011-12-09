@@ -383,9 +383,9 @@ try_ashmem:
 	    int tsize;
 	    base = gpu1_base;
 	    offset = (int)ogl_alloc(w,h,format,text,stride,&tsize,gpu1_base);
-            fd = open("/dev/pmem", O_RDWR, 0);
+            fd = gpu1_fd;//open("/dev/pmem", O_RDWR, 0);
 	    err = fd < 0 ? fd : 0;
-
+/*
 	    int off = offset;
 	    if(off%4096)
 	    {
@@ -394,18 +394,18 @@ try_ashmem:
             }
 
 	     if(tsize % 4096)
-		tsize += 4096 - (tsize%4096);
+		tsize += 4096 - (tsize%4096); */
 	    size = tsize;
 
-            struct pmem_region sub = { off, tsize }; //offset, size };
+            struct pmem_region sub = {0,13*1024*1024};//{ off, tsize }; //offset, size };
 
             // and connect to it
            // if (err == 0)
-                err = ioctl(fd, PMEM_CONNECT, gpu1_fd);
+//                err = ioctl(fd, PMEM_CONNECT, gpu1_fd);
 
  	   // and make it available to the client process
            //if (err == 0)
-                err = ioctl(fd, PMEM_MAP, &sub);
+//                err = ioctl(fd, PMEM_MAP, &sub);
 
 	    LOGE("Memsetting");
             memset((char*)base + offset, 0, size);

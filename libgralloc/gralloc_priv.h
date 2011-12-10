@@ -86,12 +86,10 @@ struct private_handle_t {
     int     base;
     int     map_offset;
     int     pid;
-
-    int     oem[32];
     unsigned int  text;
 
 #ifdef __cplusplus
-    static const int sNumInts = 8;
+    static const int sNumInts = 9;
     static const int sNumFds = 1;
     static const int sMagic = 'gmsm';
 

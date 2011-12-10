@@ -54,6 +54,8 @@ static int gralloc_map(gralloc_module_t const* module,
         buffer_handle_t handle,
         void** vaddr)
 {
+    LOGW("Map request");
+
     private_handle_t* hnd = (private_handle_t*)handle;
     if (!(hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER)) {
         size_t size = hnd->size;

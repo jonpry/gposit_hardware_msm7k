@@ -37,6 +37,8 @@
 #include <linux/msm_hw3d.h>
 #include <linux/android_pmem.h>
 
+#include <GLES/gl.h>
+
 #include "gralloc_priv.h"
 #include "allocator.h"
 
@@ -59,7 +61,7 @@ struct gralloc_context_t {
 };
 
 static int gralloc_alloc_buffer(alloc_device_t* dev,
-        size_t size, int usage, buffer_handle_t* pHandle);
+        size_t size, int usage, int w, int h, int format, int* stride, GLuint *text, ogl_alloc_t ogl_alloc, buffer_handle_t* pHandle);
 
 /*****************************************************************************/
 
@@ -87,6 +89,8 @@ extern int gralloc_perform(struct gralloc_module_t const* module,
         int operation, ... );
 
 /*****************************************************************************/
+
+static ogl_free_t ogl_free;
 
 static struct hw_module_methods_t gralloc_module_methods = {
         open: gralloc_device_open
@@ -151,7 +155,7 @@ static int gralloc_alloc_framebuffer_locked(alloc_device_t* dev,
         // we return a regular buffer which will be memcpy'ed to the main
         // screen when post is called.
         int newUsage = (usage & ~GRALLOC_USAGE_HW_FB) | GRALLOC_USAGE_HW_2D;
-        return gralloc_alloc_buffer(dev, bufferSize, newUsage, pHandle);
+        return gralloc_alloc_buffer(dev, bufferSize, newUsage, 0, 0, 0, 0, 0, 0, pHandle);
     }
 
     if (bufferMask >= ((1LU<<numBuffers)-1)) {
@@ -246,6 +250,32 @@ static int init_pmem_area(private_module_t* m)
     return err;
 }
 
+static unsigned char* gpu1_base=0;
+static int gpu1_fd=0;
+static int init_texture_access()
+{
+  if(gpu1_base)
+	return 0;
+  gpu1_fd = open("/dev/pmem_gpu1", O_RDWR, 0);
+
+  if (gpu1_fd >= 0) {
+        size_t size;
+        pmem_region region;
+        if (ioctl(gpu1_fd, PMEM_GET_TOTAL_SIZE, &region) < 0) {
+            LOGE("PMEM_GET_TOTAL_SIZE failed, limp mode");
+            size = 8<<20;   // 8 MiB
+        } else {
+            size = region.len;
+        }
+        gpu1_base = (unsigned char*)mmap(0, size, 
+                PROT_READ|PROT_WRITE, MAP_SHARED, gpu1_fd, 0);
+
+        LOGE("mmapped gpu1 %d bytes", size);
+	return 0;
+  }
+  return 1;
+}
+
 struct hw3d_region regions[HW3D_NUM_REGIONS];
 static int init_gpu_area_locked(private_module_t* m)
 {
@@ -291,6 +321,7 @@ static int init_gpu_area_locked(private_module_t* m)
         m->gpu = 0;
         m->gpu_base = 0;
     }
+
     return err;
 }
 
@@ -364,7 +395,7 @@ void* gralloc_alloc_gpu_framebuffer(alloc_device_t* dev, size_t size, int fd, pr
 }
 
 static int gralloc_alloc_buffer(alloc_device_t* dev,
-        size_t size, int usage, buffer_handle_t* pHandle)
+        size_t size, int usage, int w, int h, int format, int* stride, GLuint *text, ogl_alloc_t ogl_alloc, buffer_handle_t* pHandle)
 {
     int err = 0;
     int flags = 0;
@@ -394,51 +425,45 @@ try_ashmem:
             err = -errno;
         }
     } else if ((usage & GRALLOC_USAGE_HW_RENDER) == 0) {
+	flags |= private_handle_t::PRIV_FLAGS_USES_OGL;
         private_module_t* m = reinterpret_cast<private_module_t*>(
                 dev->common.module);
-
         err = init_pmem_area(m);
+        init_texture_access();
         if (err == 0) {
-            // PMEM buffers are always mmapped
-            base = m->pmem_master_base;
-            offset = sAllocator.allocate(size);
-            if (offset < 0) {
-                // no more pmem memory
-                err = -ENOMEM;
-            } else {
-                struct pmem_region sub = { offset, size };
-                
-                // now create the "sub-heap"
-                fd = open("/dev/pmem", O_RDWR, 0);
-                err = fd < 0 ? fd : 0;
-                
-                // and connect to it
-                if (err == 0)
-                    err = ioctl(fd, PMEM_CONNECT, m->pmem_master);
-
-                // and make it available to the client process
-                if (err == 0)
-                    err = ioctl(fd, PMEM_MAP, &sub);
-
-                if (err < 0) {
-                    err = -errno;
-                    close(fd);
-                    sAllocator.deallocate(offset);
-                    fd = -1;
-                }
-                memset((char*)base + offset, 0, size);
-                //LOGD_IF(!err, "allocating pmem size=%d, offset=%d", size, offset);
+	    LOGE("About to call ogl_alloc at 0x%p gpu1_base 0x%p", ogl_alloc, gpu1_base);
+	    int tsize;
+	    base = gpu1_base;
+	    offset = (int)ogl_alloc(w,h,format,text,stride,&tsize,gpu1_base);
+            fd = gpu1_fd;//open("/dev/pmem", O_RDWR, 0);
+	    err = fd < 0 ? fd : 0;
+/*
+	    int off = offset;
+	    if(off%4096)
+	    {
+		off -= off % 4096;
+		tsize += off % 4096;
             }
-        } else {
-            if ((usage & GRALLOC_USAGE_HW_2D) == 0) {
-                // the caller didn't request PMEM, so we can try something else
-                flags &= ~private_handle_t::PRIV_FLAGS_USES_PMEM;
-                err = 0;
-                goto try_ashmem;
-            } else {
-                LOGE("couldn't open pmem (%s)", strerror(errno));
-            }
-        }
+
+	     if(tsize % 4096)
+		tsize += 4096 - (tsize%4096); */
+	    size = tsize;
+
+            struct pmem_region sub = {0,13*1024*1024};//{ off, tsize }; //offset, size };
+
+            // and connect to it
+           // if (err == 0)
+//                err = ioctl(fd, PMEM_CONNECT, gpu1_fd);
+
+ 	   // and make it available to the client process
+           //if (err == 0)
+//                err = ioctl(fd, PMEM_MAP, &sub);
+
+	    LOGE("Memsetting");
+            memset((char*)base + offset, 0, size);
+	    LOGE("Done");
+            //LOGD_IF(!err, "allocating pmem size=%d, offset=%d", size, offset);
+        } 
     } else {
         // looks like we want 3D...
         flags &= ~private_handle_t::PRIV_FLAGS_USES_PMEM;
@@ -499,6 +524,8 @@ try_ashmem:
             hnd->base = int(base)+offset;
             hnd->gpu_fd = gpu_fd;
             hnd->map_offset = m->fb_map_offset;
+	    if(text)
+		hnd->text = *text;
             *pHandle = hnd;
         }
     }
@@ -512,12 +539,17 @@ try_ashmem:
 
 static int gralloc_alloc(alloc_device_t* dev,
         int w, int h, int format, int usage,
-        buffer_handle_t* pHandle, int* pStride)
+        buffer_handle_t* pHandle, int* pStride, 
+        GLuint* text, ogl_alloc_t ogl_alloc,
+	ogl_free_t ogl_free_i)
 {
     if (!pHandle || !pStride)
         return -EINVAL;
 
     size_t size, stride;
+
+    if(ogl_free_i)	
+	ogl_free = ogl_free_i;
 
     int bpp = 0;
     switch (format) {
@@ -553,17 +585,21 @@ static int gralloc_alloc(alloc_device_t* dev,
     }
 
     int err;
+    int tstride=0;
     if (usage & GRALLOC_USAGE_HW_FB) {
         err = gralloc_alloc_framebuffer(dev, size, usage, pHandle);
     } else {
-        err = gralloc_alloc_buffer(dev, size, usage, pHandle);
+        err = gralloc_alloc_buffer(dev, size, usage, w,h,format,&tstride,text,ogl_alloc,pHandle);
     }
 
     if (err < 0) {
         return err;
     }
 
-    *pStride = stride;
+    if(tstride)
+	*pStride = tstride;
+    else
+    	*pStride = stride;
     return 0;
 }
 
@@ -574,39 +610,44 @@ static int gralloc_free(alloc_device_t* dev,
         return -EINVAL;
 
     private_handle_t const* hnd = reinterpret_cast<private_handle_t const*>(handle);
-    if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) {
-        // free this buffer
-        private_module_t* m = reinterpret_cast<private_module_t*>(
+    if (hnd->flags & private_handle_t::PRIV_FLAGS_USES_OGL) {
+	LOGE("Freeing of texture backed memory not supported yet");
+	ogl_free(hnd->text);
+    }else{
+        if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) {
+           // free this buffer
+           private_module_t* m = reinterpret_cast<private_module_t*>(
                 dev->common.module);
-        const size_t bufferSize = m->finfo.line_length * m->info.yres;
-        int index = (hnd->base - m->framebuffer->base) / bufferSize;
-        m->bufferMask &= ~(1<<index); 
-    } else { 
-        if (hnd->flags & private_handle_t::PRIV_FLAGS_USES_PMEM) {
-            if (hnd->fd >= 0) {
-                struct pmem_region sub = { hnd->offset, hnd->size };
-                int err = ioctl(hnd->fd, PMEM_UNMAP, &sub);
-                LOGE_IF(err<0, "PMEM_UNMAP failed (%s), "
+           const size_t bufferSize = m->finfo.line_length * m->info.yres;
+           int index = (hnd->base - m->framebuffer->base) / bufferSize;
+           m->bufferMask &= ~(1<<index); 
+        } else { 
+           if (hnd->flags & private_handle_t::PRIV_FLAGS_USES_PMEM) {
+               if (hnd->fd >= 0) {
+                   struct pmem_region sub = { hnd->offset, hnd->size };
+                   int err = ioctl(hnd->fd, PMEM_UNMAP, &sub);
+                   LOGE_IF(err<0, "PMEM_UNMAP failed (%s), "
                         "fd=%d, sub.offset=%lu, sub.size=%lu",
                         strerror(errno), hnd->fd, hnd->offset, hnd->size);
-                if (err == 0) {
-                    // we can't deallocate the memory in case of UNMAP failure
-                    // because it would give that process access to someone else's
-                    // surfaces, which would be a security breach.
-                    sAllocator.deallocate(hnd->offset);
+                    if (err == 0) {
+                        // we can't deallocate the memory in case of UNMAP failure
+                        // because it would give that process access to someone else's
+                        // surfaces, which would be a security breach.
+                        sAllocator.deallocate(hnd->offset);
+                    }
                 }
-            }
-        } else if (hnd->flags & private_handle_t::PRIV_FLAGS_USES_GPU) {
-            LOGD("freeing GPU buffer at %d", hnd->offset);
-            sAllocatorGPU.deallocate(hnd->offset);
+             } else if (hnd->flags & private_handle_t::PRIV_FLAGS_USES_GPU) {
+                LOGD("freeing GPU buffer at %d", hnd->offset);
+                sAllocatorGPU.deallocate(hnd->offset);
+             }
+
+             gralloc_module_t* module = reinterpret_cast<gralloc_module_t*>(
+                dev->common.module);
+            terminateBuffer(module, const_cast<private_handle_t*>(hnd));
         }
 
-        gralloc_module_t* module = reinterpret_cast<gralloc_module_t*>(
-                dev->common.module);
-        terminateBuffer(module, const_cast<private_handle_t*>(hnd));
+        close(hnd->fd);
     }
-
-    close(hnd->fd);
     delete hnd;
     return 0;
 }

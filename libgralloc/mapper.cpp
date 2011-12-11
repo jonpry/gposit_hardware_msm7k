@@ -54,21 +54,36 @@ static int gralloc_map(gralloc_module_t const* module,
         buffer_handle_t handle,
         void** vaddr)
 {
+    LOGW("Map request");
+
     private_handle_t* hnd = (private_handle_t*)handle;
     if (!(hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER)) {
         size_t size = hnd->size;
 #if PMEM_HACK
         size += hnd->offset;
 #endif
+	if(size%4096)
+		size += 4096 - (size%4096);
+
         void* mappedAddress = mmap(0, size,
                 PROT_READ|PROT_WRITE, MAP_SHARED, hnd->fd, 0);
         if (mappedAddress == MAP_FAILED) {
-            LOGE("Could not mmap handle %p, fd=%d (%s)",
-                    handle, hnd->fd, strerror(errno));
+		char fdPath[512];
+		char filename[512];
+		for(int i=0; i < 512; i++)
+			filename[i] = 0;
+		sprintf(fdPath,"/proc/self/fd/%d",hnd->fd);
+		readlink(fdPath,filename,512);
+
+
+            LOGE("Could not mmap handle %p, fd=%d (%s) size (0x%8.8X) source: %s",
+                    handle, hnd->fd, strerror(errno), size, filename);
             hnd->base = 0;
             return -errno;
         }
         hnd->base = intptr_t(mappedAddress) + hnd->offset;
+	//TODO: this is just a hack to make sure our surface is not clobbering anything important
+	//hnd->base = (int)malloc(size);
         //LOGD("gralloc_map() succeeded fd=%d, off=%d, size=%d, vaddr=%p", 
         //        hnd->fd, hnd->offset, hnd->size, mappedAddress);
     }

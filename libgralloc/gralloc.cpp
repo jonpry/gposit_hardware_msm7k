@@ -251,13 +251,15 @@ static int init_pmem_area(private_module_t* m)
 }
 
 static unsigned char* gpu1_base=0;
+static unsigned char* gpu1_cached_base=0;
 static int gpu1_fd=0;
+static int gpu1_cached_fd=0;
 static int init_texture_access()
 {
   if(gpu1_base)
 	return 0;
   gpu1_fd = open("/dev/pmem_gpu1", O_RDWR, 0);
-
+  gpu1_cached_fd = open("/dev/pmem_gpu1_cached", O_RDWR, 0);
   if (gpu1_fd >= 0) {
         size_t size;
         pmem_region region;
@@ -269,6 +271,20 @@ static int init_texture_access()
         }
         gpu1_base = (unsigned char*)mmap(0, size, 
                 PROT_READ|PROT_WRITE, MAP_SHARED, gpu1_fd, 0);
+
+        LOGE("mmapped gpu1 %d bytes", size);
+  }
+  if (gpu1_cached_fd >= 0) {
+        size_t size;
+        pmem_region region;
+        if (ioctl(gpu1_cached_fd, PMEM_GET_TOTAL_SIZE, &region) < 0) {
+            LOGE("PMEM_GET_TOTAL_SIZE failed, limp mode");
+            size = 8<<20;   // 8 MiB
+        } else {
+            size = region.len;
+        }
+        gpu1_cached_base = (unsigned char*)mmap(0, size, 
+                PROT_READ|PROT_WRITE, MAP_SHARED, gpu1_cached_fd, 0);
 
         LOGE("mmapped gpu1 %d bytes", size);
 	return 0;
@@ -433,9 +449,9 @@ try_ashmem:
         if (err == 0) {
 	    LOGE("About to call ogl_alloc at 0x%p gpu1_base 0x%p", ogl_alloc, gpu1_base);
 	    int tsize;
-	    base = gpu1_base;
+	    base = gpu1_cached_base;
 	    offset = (int)ogl_alloc(w,h,format,text,stride,&tsize,gpu1_base);
-            fd = gpu1_fd;//open("/dev/pmem", O_RDWR, 0);
+            fd = gpu1_cached_fd;//open("/dev/pmem ", O_RDWR, 0);
 	    err = fd < 0 ? fd : 0;
 /*
 	    int off = offset;

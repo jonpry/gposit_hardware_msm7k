@@ -85,10 +85,11 @@ static int fb_setUpdateRect(struct framebuffer_device_t* dev,
     return 0;
 }
 
+static size_t last_offset=0;
 static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 {
-    if (private_handle_t::validate(buffer) < 0)
-        return -EINVAL;
+   // if (private_handle_t::validate(buffer) < 0)
+   //     return -EINVAL;
     fb_context_t* ctx = (fb_context_t*)dev;
 
  //   LOGE("FB_POST %d", *((unsigned int*)0));
@@ -98,16 +99,23 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
     private_module_t* m = reinterpret_cast<private_module_t*>(
             dev->common.module);
     
-    if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) {
-        const size_t offset = hnd->base - m->framebuffer->base;
+    if (hnd == 0 || (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER)) {
+        size_t offset = !last_offset;
+	last_offset = offset;
+	if(hnd)
+	     offset = hnd->base - m->framebuffer->base;
         m->info.activate = FB_ACTIVATE_VBL;
-        m->info.yoffset = (offset / m->finfo.line_length);//?1:0;
+        m->info.yoffset = offset;
+	if(hnd)
+	    m->info.yoffset = (offset / m->finfo.line_length);//?1:0;
         if (ioctl(m->framebuffer->fd, FBIOPUT_VSCREENINFO, &m->info) == -1) {
             LOGE("FBIOPUT_VSCREENINFO failed");
-            m->base.unlock(&m->base, buffer); 
+	    if(buffer)
+               m->base.unlock(&m->base, buffer); 
             return -errno;
         }
-        m->currentBuffer = buffer;
+	if(buffer)
+            m->currentBuffer = buffer;
         
     } else {
         // If we can't do the page_flip, just copy the buffer to the front 

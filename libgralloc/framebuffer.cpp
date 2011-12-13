@@ -92,7 +92,7 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
    //     return -EINVAL;
     fb_context_t* ctx = (fb_context_t*)dev;
 
- //   LOGE("FB_POST %d", *((unsigned int*)0));
+    //LOGE("FB_POST %d", (unsigned int)buffer);
 
 
     private_handle_t const* hnd = reinterpret_cast<private_handle_t const*>(buffer);

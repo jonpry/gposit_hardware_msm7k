@@ -619,6 +619,14 @@ static int gralloc_alloc(alloc_device_t* dev,
     return 0;
 }
 
+static void gralloc_flush(alloc_device_t* dev)
+{
+    struct pmem_region region;
+    region.offset = 0;
+    region.len = 13*1024*1024;
+    ioctl(gpu1_cached_fd,PMEM_CACHE_FLUSH,&region);
+}
+
 static int gralloc_free(alloc_device_t* dev,
         buffer_handle_t handle)
 {
@@ -701,6 +709,7 @@ int gralloc_device_open(const hw_module_t* module, const char* name,
 
         dev->device.alloc   = gralloc_alloc;
         dev->device.free    = gralloc_free;
+	dev->device.flush   = gralloc_flush;
 
         *device = &dev->device.common;
         status = 0;

@@ -39,6 +39,8 @@
 #include "gralloc_priv.h"
 #include "gr.h"
 
+#define MSMFB_UPDATE            _IOW(MSMFB_IOCTL_MAGIC, 3, void*)
+
 /*****************************************************************************/
 
 // numbers of buffers for page flipping
@@ -106,14 +108,22 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 	     offset = hnd->base - m->framebuffer->base;
         m->info.activate = FB_ACTIVATE_VBL;
         m->info.yoffset = offset;
-	if(hnd)
+	if(hnd) 
+   	{
 	    m->info.yoffset = (offset / m->finfo.line_length);//?1:0;
-        if (ioctl(m->framebuffer->fd, FBIOPUT_VSCREENINFO, &m->info) == -1) {
-            LOGE("FBIOPUT_VSCREENINFO failed");
-	    if(buffer)
-               m->base.unlock(&m->base, buffer); 
-            return -errno;
-        }
+            if (ioctl(m->framebuffer->fd, FBIOPUT_VSCREENINFO, &m->info) == -1) {
+               LOGE("FBIOPUT_VSCREENINFO failed");
+	       if(buffer)
+                  m->base.unlock(&m->base, buffer); 
+               return -errno;
+            }
+     	}else{
+		struct mdp_rect rect;
+		rect.x = 0; rect.y = 0;
+		rect.w = 480;
+		rect.h = 800;
+		ioctl(m->framebuffer->fd, MSMFB_UPDATE, &rect);
+	}
 	if(buffer)
             m->currentBuffer = buffer;
         
